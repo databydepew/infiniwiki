@@ -9,6 +9,7 @@ import ContentDisplay from './components/ContentDisplay';
 import SearchBar from './components/SearchBar';
 import LoadingSkeleton from './components/LoadingSkeleton';
 import AsciiArtDisplay from './components/AsciiArtDisplay';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // A curated list of "banger" words and phrases for the random button.
 const PREDEFINED_WORDS = [
@@ -51,6 +52,10 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [asciiArt, setAsciiArt] = useState<AsciiArtData | null>(null);
   const [generationTime, setGenerationTime] = useState<number | null>(null);
+  
+  // Simple cache to avoid regenerating content for the same topics
+  const [contentCache] = useState<Map<string, string>>(new Map());
+  const [artCache] = useState<Map<string, AsciiArtData>>(new Map());
 
 
   useEffect(() => {
@@ -66,23 +71,42 @@ const App: React.FC = () => {
       setAsciiArt(null);
       setGenerationTime(null);
       const startTime = performance.now();
+      
+      const topicKey = currentTopic.toLowerCase();
 
-      // Kick off ASCII art generation, but don't wait for it.
-      // It will appear when it's ready, without blocking the definition.
-      generateAsciiArt(currentTopic)
-        .then(art => {
-          if (!isCancelled) {
-            setAsciiArt(art);
-          }
-        })
-        .catch(err => {
-          if (!isCancelled) {
-            console.error("Failed to generate ASCII art:", err);
-            // Generate a simple fallback ASCII art box on failure
-            const fallbackArt = createFallbackArt(currentTopic);
-            setAsciiArt(fallbackArt);
-          }
-        });
+      // Check cache for ASCII art first
+      const cachedArt = artCache.get(topicKey);
+      if (cachedArt) {
+        setAsciiArt(cachedArt);
+      } else {
+        // Kick off ASCII art generation, but don't wait for it.
+        // It will appear when it's ready, without blocking the definition.
+        generateAsciiArt(currentTopic)
+          .then(art => {
+            if (!isCancelled) {
+              artCache.set(topicKey, art);
+              setAsciiArt(art);
+            }
+          })
+          .catch(err => {
+            if (!isCancelled) {
+              console.error("Failed to generate ASCII art:", err);
+              // Generate a simple fallback ASCII art box on failure
+              const fallbackArt = createFallbackArt(currentTopic);
+              setAsciiArt(fallbackArt);
+            }
+          });
+      }
+
+      // Check cache for content
+      const cachedContent = contentCache.get(topicKey);
+      if (cachedContent) {
+        setContent(cachedContent);
+        const endTime = performance.now();
+        setGenerationTime(endTime - startTime);
+        setIsLoading(false);
+        return;
+      }
 
       let accumulatedContent = '';
       try {
@@ -96,6 +120,10 @@ const App: React.FC = () => {
           if (!isCancelled) {
             setContent(accumulatedContent);
           }
+        }
+        // Cache the completed content
+        if (!isCancelled && accumulatedContent) {
+          contentCache.set(topicKey, accumulatedContent);
         }
       } catch (e: unknown) {
         if (!isCancelled) {
@@ -153,61 +181,83 @@ const App: React.FC = () => {
     }
   }, [currentTopic]);
 
+  // Add keyboard shortcuts for better UX
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Only trigger if no input is focused
+      if (document.activeElement?.tagName === 'INPUT') return;
+      
+      if (event.key === 'r' || event.key === 'R') {
+        event.preventDefault();
+        if (!isLoading) {
+          handleRandom();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isLoading, handleRandom]);
+
 
   return (
-    <div>
-      <SearchBar onSearch={handleSearch} onRandom={handleRandom} isLoading={isLoading} />
-      
-      <header style={{ textAlign: 'center', marginBottom: '2rem' }}>
-        <h1 style={{ letterSpacing: '0.2em', textTransform: 'uppercase' }}>
-          INFINITE WIKI
-        </h1>
-        <AsciiArtDisplay artData={asciiArt} topic={currentTopic} />
-      </header>
-      
-      <main>
-        <div>
-          <h2 style={{ marginBottom: '2rem', textTransform: 'capitalize' }}>
-            {currentTopic}
-          </h2>
+    <ErrorBoundary>
+      <div>
+        <SearchBar onSearch={handleSearch} onRandom={handleRandom} isLoading={isLoading} />
+        
+        <header style={{ textAlign: 'center', marginBottom: '2rem' }}>
+          <h1 style={{ letterSpacing: '0.2em', textTransform: 'uppercase' }}>
+            INFINITE WIKI
+          </h1>
+          <AsciiArtDisplay artData={asciiArt} topic={currentTopic} />
+        </header>
+        
+        <main>
+          <div>
+            <h2 style={{ marginBottom: '2rem', textTransform: 'capitalize' }}>
+              {currentTopic}
+            </h2>
 
-          {error && (
-            <div style={{ border: '1px solid #cc0000', padding: '1rem', color: '#cc0000' }}>
-              <p style={{ margin: 0 }}>An Error Occurred</p>
-              <p style={{ marginTop: '0.5rem', margin: 0 }}>{error}</p>
-            </div>
-          )}
-          
-          {/* Show skeleton loader when loading and no content is yet available */}
-          {isLoading && content.length === 0 && !error && (
-            <LoadingSkeleton />
-          )}
+            {error && (
+              <div style={{ border: '1px solid #cc0000', padding: '1rem', color: '#cc0000' }}>
+                <p style={{ margin: 0 }}>An Error Occurred</p>
+                <p style={{ marginTop: '0.5rem', margin: 0 }}>{error}</p>
+              </div>
+            )}
+            
+            {/* Show skeleton loader when loading and no content is yet available */}
+            {isLoading && content.length === 0 && !error && (
+              <LoadingSkeleton />
+            )}
 
-          {/* Show content as it streams or when it's interactive */}
-          {content.length > 0 && !error && (
-             <ContentDisplay 
-               content={content} 
-               isLoading={isLoading} 
-               onWordClick={handleWordClick} 
-             />
-          )}
+            {/* Show content as it streams or when it's interactive */}
+            {content.length > 0 && !error && (
+               <ContentDisplay 
+                 content={content} 
+                 isLoading={isLoading} 
+                 onWordClick={handleWordClick} 
+               />
+            )}
 
-          {/* Show empty state if fetch completes with no content and is not loading */}
-          {!isLoading && !error && content.length === 0 && (
-            <div style={{ color: '#888', padding: '2rem 0' }}>
-              <p>Content could not be generated.</p>
-            </div>
-          )}
-        </div>
-      </main>
+            {/* Show empty state if fetch completes with no content and is not loading */}
+            {!isLoading && !error && content.length === 0 && (
+              <div style={{ color: '#888', padding: '2rem 0' }}>
+                <p>Content could not be generated.</p>
+              </div>
+            )}
+          </div>
+        </main>
 
-      <footer className="sticky-footer">
-        <p className="footer-text" style={{ margin: 0 }}>
-          Infinite Wiki by <a href="https://x.com/dev_valladares" target="_blank" rel="noopener noreferrer">Dev Valladares</a> · Generated by Gemini 2.5 Flash Lite
-          {generationTime && ` · ${Math.round(generationTime)}ms`}
-        </p>
-      </footer>
-    </div>
+        <footer className="sticky-footer">
+          <p className="footer-text" style={{ margin: 0 }}>
+            Infinite Wiki by <a href="https://x.com/dev_valladares" target="_blank" rel="noopener noreferrer">Dev Valladares</a> · Generated by Gemini 2.5 Flash Lite
+            {generationTime && ` · ${Math.round(generationTime)}ms`}
+            <br />
+            <small style={{ fontSize: '0.8em', color: '#aaa' }}>Press 'R' for random topic</small>
+          </p>
+        </footer>
+      </div>
+    </ErrorBoundary>
   );
 };
 

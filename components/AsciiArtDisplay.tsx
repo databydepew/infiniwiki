@@ -35,7 +35,7 @@ const AsciiArtDisplay: React.FC<AsciiArtDisplayProps> = ({ artData, topic }) => 
           window.clearInterval(intervalId);
           setIsStreaming(false);
         }
-      }, 5); // A 10ms delay creates a fast, smooth "typing" effect.
+      }, 1); // A 1ms delay creates a fast, smooth "typing" effect.
 
     } else {
       // If artData is null (e.g., on a new search), reset to the placeholder.
